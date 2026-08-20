@@ -55,7 +55,7 @@ export function apply(ctx: Context): void {
 
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
     name: 'settings.plugin.item',
-    id: 'dsh-restart',
+    key: 'dsh-restart',
     order: 40,
     locale: NS,
     inject: () => ({
