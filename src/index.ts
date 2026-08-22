@@ -545,9 +545,12 @@ export function apply(ctx: Context): void {
     debugLog('apply: ensureWatchdog THREW: ' + String(error))
   }
 
-  const webServer = ctx.get('webServer') as { register: (route: WebRoute) => () => void } | undefined
-  if (webServer !== undefined) {
-    ctx.effect(() => webServer.register({
+  // The restart bundle may mount before the Web host. A one-shot ctx.get()
+  // therefore makes the Settings button permanently unavailable on that boot.
+  // Inject the optional service so the route follows the Web server lifetime.
+  ctx.inject(['webServer'], (webCtx) => {
+    const webServer = webCtx.webServer as { register: (route: WebRoute) => () => void }
+    webServer.register({
       kind: 'exact',
       path: '/plugins/dsh-restart/restart',
       handler: (req, res) => {
@@ -570,8 +573,8 @@ export function apply(ctx: Context): void {
         })
         res.end(JSON.stringify({ ...result, sessionIds }))
       },
-    }), 'dsh-restart: same-origin restart endpoint')
-  }
+    })
+  })
 
   try {
     ctx.tools.register(defineTool({
