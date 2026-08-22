@@ -1,6 +1,6 @@
 {
   "name": "dsh-restart",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH 重启插件：可配置的重启方式（Node 原生 / 旧 PowerShell 适配）、重启后自动继续的提示词、可选看门狗自动拉起。",
   "license": "MIT",
   "repository": {
@@ -51,6 +51,7 @@
     "lib/**/*.map",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
+    "docs",
     "src",
     "README.md",
     "LICENSE"
