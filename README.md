@@ -2,6 +2,10 @@
 
 重启整个 DeepSeek Harness 进程的插件，用于重新加载插件与配置（profile 的 cordis 组合、settings 等）。host + client 双半，装进 profile 的 bundle 后即可用。
 
+![DSH 重启插件设置](./docs/images/dsh-restart-settings.png)
+
+> 截图来自真实 `web` profile 部署，展示当前 DSH 设置页中的重启配置卡片。
+
 ## 功能
 
 - **模型工具 `restart_harness`**：让 agent 直接安排一次进程重启（可选 `delayMs`）。
