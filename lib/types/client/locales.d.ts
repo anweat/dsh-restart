@@ -18,6 +18,8 @@ export declare const zh: {
     readonly restarting: "正在重启…";
     readonly restartHint: "配置修改会自动保存；立即重启会短暂断开当前页面。";
     readonly restartFailed: "未能安排重启，请检查服务日志后重试。";
+    readonly restartStale: "已发送重启请求，但进程身份始终未变化。请检查服务日志。";
+    readonly restartSucceeded: "DSH 已重启并恢复连接。";
 };
 export declare const en: {
     readonly title: "DSH Restart";
@@ -39,4 +41,6 @@ export declare const en: {
     readonly restarting: "Restarting…";
     readonly restartHint: "Configuration changes save automatically; restarting briefly disconnects this page.";
     readonly restartFailed: "Could not schedule the restart. Check the service logs and try again.";
+    readonly restartStale: "The restart was requested, but the process identity never changed. Check the service logs.";
+    readonly restartSucceeded: "DSH restarted and reconnected.";
 };
