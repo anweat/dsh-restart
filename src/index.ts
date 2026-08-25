@@ -35,6 +35,7 @@ import process from 'node:process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 
 export const name = 'dsh-restart'
 export const inject = ['tools', 'commands', 'agents', 'shell', 'sandboxPolicy']
@@ -76,6 +77,9 @@ const WATCHDOG_PID_FILENAME = 'dsh-watchdog.pid'
 
 /** Restart-in-progress flag: stops the watchdog from racing a deliberate restart. */
 const RESTARTING_FLAG_FILENAME = 'dsh-restarting.flag'
+
+/** Stable identity for this loaded DSH process. */
+const PROCESS_STARTED_AT = new Date(performance.timeOrigin).toISOString()
 
 function homeDir(): string {
   return process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
@@ -340,7 +344,7 @@ function writeProcessIndex(): void {
       execPath: process.execPath,
       execArgv: process.execArgv,
       argv: process.argv.slice(1),
-      startedAt: new Date().toISOString(),
+      startedAt: PROCESS_STARTED_AT,
     }, null, 2) + '\n', 'utf8')
   } catch (error) {
     console.error('[dsh-restart] failed to write process index:', error)
@@ -413,10 +417,19 @@ function restart(delayMs: number): RestartInfo {
   }
 }
 
-/** Accept the privileged restart action only from this Web host on loopback. */
-function isTrustedWebRestart(req: { socket: { remoteAddress?: string }; headers: { origin?: string; host?: string } }): boolean {
+interface WebRestartRequest {
+  socket: { remoteAddress?: string }
+  headers: { origin?: string; host?: string }
+}
+
+function isLoopbackWebRequest(req: WebRestartRequest): boolean {
   const address = req.socket.remoteAddress
-  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+}
+
+/** Accept the privileged restart action only from this Web host on loopback. */
+function isTrustedWebRestart(req: WebRestartRequest): boolean {
+  if (!isLoopbackWebRequest(req)) return false
   const { origin, host } = req.headers
   if (typeof origin !== 'string' || typeof host !== 'string') return false
   try {
@@ -554,8 +567,21 @@ export function apply(ctx: Context): void {
       kind: 'exact',
       path: '/plugins/dsh-restart/restart',
       handler: (req, res) => {
+        if (req.method === 'GET') {
+          if (!isLoopbackWebRequest(req)) {
+            res.writeHead(403)
+            res.end('forbidden')
+            return
+          }
+          res.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+          })
+          res.end(JSON.stringify({ pid: process.pid, startedAt: PROCESS_STARTED_AT }))
+          return
+        }
         if (req.method !== 'POST') {
-          res.writeHead(405, { allow: 'POST' })
+          res.writeHead(405, { allow: 'GET, POST' })
           res.end('method not allowed')
           return
         }
