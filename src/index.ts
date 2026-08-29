@@ -214,11 +214,12 @@ function tryAutoContinue(ctx: Context, dynamic: () => RestartConfig): void {
  */
 function watchdogScript(cooldownMs: number, pollMs: number): string {
   return String.raw`// dsh-watchdog: monitors the DSH web port and relaunches it on death.
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 const net = require('node:net')
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
+${relaunchHelperSource()}
 const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
 const indexFile = path.join(home, 'dsh-process.json')
 const stopFile = path.join(home, 'dsh-stop.flag')
@@ -262,13 +263,9 @@ function relaunch() {
   const out = path.join(os.tmpdir(), 'dsh-watchdog-' + stamp + '.out.log')
   const err = path.join(os.tmpdir(), 'dsh-watchdog-' + stamp + '.err.log')
   try {
-    const o = fs.openSync(out, 'a')
-    const e = fs.openSync(err, 'a')
     const argv = [].concat(idx.execArgv || [], idx.argv || [])
-    const child = spawn(idx.execPath, argv, { cwd: idx.cwd, detached: true, stdio: ['ignore', o, e], env: process.env })
-    child.once('error', function (er) { log('relaunch spawn error: ' + String(er)) })
-    child.unref()
-    log('relaunch: spawned pid ' + child.pid + ' cwd=' + idx.cwd)
+    const mode = relaunchDsh(idx.execPath, argv, idx.cwd, out, err)
+    log('relaunch: spawned via ' + mode + ' cwd=' + idx.cwd)
   } catch (er) {
     log('relaunch failed: ' + String(er))
   }
@@ -351,6 +348,84 @@ function writeProcessIndex(): void {
   }
 }
 
+/**
+ * Emit the JS source of a `relaunchDsh(execPath, argv, cwd, logOut, logErr)`
+ * helper, shared verbatim by the restart helper and the watchdog.
+ *
+ * Both relaunch paths run in a process that is about to disown its child, so the
+ * child must survive on its own. The obvious spawn for that —
+ * `detached: true` + `stdio: ['ignore', fd, fd]` — also leaves the child with no
+ * console at all, and on Windows that regresses every later sandbox `pwsh` tool
+ * call: DSH deliberately omits CREATE_NO_WINDOW when spawning them (per
+ * dsh-sandbox-windows-acl, a restricted-token child dies with 0xC0000142 if it
+ * is set), so those children allocate a brand-new visible console window each.
+ * Verified by counting conhost.exe children: the plain spawn yields one per
+ * pwsh call, `Start-Process -WindowStyle Hidden` yields none.
+ *
+ * So on Windows the relaunch goes through `Start-Process -WindowStyle Hidden`,
+ * which supplies a real-but-hidden console that children inherit silently. The
+ * command is written to a temp .ps1 rather than passed inline because the nested
+ * quoting of an inline `-Command` is fragile. The direct spawn stays as the
+ * non-Windows path and as the fallback if PowerShell is unavailable.
+ */
+function relaunchHelperSource(): string {
+  return String.raw`
+function relaunchDirect(execPath, argv, cwd, logOut, logErr) {
+  const out = fs.openSync(logOut, 'a')
+  const err = fs.openSync(logErr, 'a')
+  const child = spawn(execPath, argv, {
+    cwd: cwd,
+    detached: true,
+    stdio: ['ignore', out, err],
+    env: process.env,
+    windowsHide: true,
+  })
+  child.once('error', function () {})
+  child.unref()
+  return child.pid
+}
+
+function relaunchHiddenConsole(execPath, argv, cwd, logOut, logErr) {
+  const q = function (v) { return String(v).replace(/'/g, "''") }
+  const list = argv.map(function (a) { return "'" + q(a) + "'" }).join(', ')
+  const script = "$ErrorActionPreference = 'Stop'\r\n"
+    + "Start-Process -FilePath '" + q(execPath) + "'"
+    + (argv.length ? " -ArgumentList @(" + list + ")" : '')
+    + " -WorkingDirectory '" + q(cwd) + "'"
+    + " -WindowStyle Hidden"
+    + " -RedirectStandardOutput '" + q(logOut) + "'"
+    + " -RedirectStandardError '" + q(logErr) + "'"
+  const psPath = path.join(os.tmpdir(), 'dsh-relaunch-' + process.pid + '-' + Date.now() + '.ps1')
+  fs.writeFileSync(psPath, '\ufeff' + script, 'utf8')
+  try {
+    const psExe = path.join(
+      process.env.SystemRoot || 'C:\\Windows',
+      'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+    )
+    const r = spawnSync(psExe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psPath], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    return r.status === 0
+  } finally {
+    try { fs.unlinkSync(psPath) } catch {}
+  }
+}
+
+function relaunchDsh(execPath, argv, cwd, logOut, logErr) {
+  if (process.platform === 'win32') {
+    let ok = false
+    try { ok = relaunchHiddenConsole(execPath, argv, cwd, logOut, logErr) } catch { ok = false }
+    if (ok) return 'hidden-console'
+    relaunchDirect(execPath, argv, cwd, logOut, logErr)
+    return 'direct-fallback'
+  }
+  relaunchDirect(execPath, argv, cwd, logOut, logErr)
+  return 'direct'
+}
+`
+}
+
 interface RestartInfo {
   ok: boolean
   pid: number
@@ -373,32 +448,41 @@ function restart(delayMs: number): RestartInfo {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const logOut = path.join(os.tmpdir(), `dsh-restart-${stamp}.out.log`)
   const logErr = path.join(os.tmpdir(), `dsh-restart-${stamp}.err.log`)
+  const helperPath = path.join(os.tmpdir(), `dsh-restart-helper-${process.pid}-${Date.now()}.cjs`)
 
   // Detached helper: waits for the old process to release its port, then spawns
   // the new DSH with the same argv + cwd, output appended to the log files.
+  // Written to a temp .cjs rather than passed via `node -e`, because the shared
+  // relaunch helper contains quoting that does not survive an inline argument.
   const helperCode = [
-    "const { spawn } = require('node:child_process')",
+    "const { spawn, spawnSync } = require('node:child_process')",
     "const fs = require('node:fs')",
+    "const os = require('node:os')",
+    "const path = require('node:path')",
+    relaunchHelperSource(),
     `const argv = ${JSON.stringify(argv)}`,
     `const cwd = ${JSON.stringify(cwd)}`,
     `const logOut = ${JSON.stringify(logOut)}`,
     `const logErr = ${JSON.stringify(logErr)}`,
+    `const selfPath = ${JSON.stringify(helperPath)}`,
     `const delay = ${delayMs + 800}`,
     'setTimeout(() => {',
     '  try {',
-    '    const out = fs.openSync(logOut, "a")',
-    '    const err = fs.openSync(logErr, "a")',
-    '    const child = spawn(process.execPath, argv, { cwd: cwd, detached: true, stdio: ["ignore", out, err], env: process.env })',
-    '    child.once("error", () => process.exit(0))',
-    '    child.unref()',
-    '  } catch (e) { process.exit(0) }',
+    '    relaunchDsh(process.execPath, argv, cwd, logOut, logErr)',
+    '  } catch (e) {',
+    '  } finally {',
+    '    try { fs.unlinkSync(selfPath) } catch {}',
+    '    process.exit(0)',
+    '  }',
     '}, delay)',
   ].join('\n')
 
-  const helper = spawn(process.execPath, ['-e', helperCode], {
+  fs.writeFileSync(helperPath, helperCode, 'utf8')
+  const helper = spawn(process.execPath, [helperPath], {
     detached: true,
     stdio: 'ignore',
     env: process.env,
+    windowsHide: true,
   })
   helper.once('error', () => {})
   helper.unref()
