@@ -1,5 +1,5 @@
 /**
- * dsh-restart — client half: a plugin-config card (设置 → 插件 → 可配置) bound
+ * dsh-restart 鈥?client half: a plugin-config card (璁剧疆 鈫?鎻掍欢 鈫?鍙厤缃? bound
  * to the `dsh-restart` settings namespace, so edits persist to settings.yaml and
  * the Host reads them back through installSettingsSection.
  */
@@ -55,7 +55,7 @@ export function apply(ctx: Context): void {
 
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
     name: 'settings.plugin.item',
-    key: 'dsh-restart',
+    id: 'dsh-restart',
     locale: NS,
     inject: () => ({
       hooks: { dshRestart: store },
