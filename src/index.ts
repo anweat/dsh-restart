@@ -29,7 +29,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 import fs from 'node:fs'
@@ -536,13 +536,15 @@ export function apply(ctx: Context): void {
   let resolveConfig: () => RestartConfig = () => DEFAULT_CONFIG
   const dynamic = (): RestartConfig => resolveConfig()
   try {
-    installSettingsSection(ctx, settingsNamespace('dsh-restart'), RestartConfigSchema, DEFAULT_CONFIG, {
-      setSource: (get) => { resolveConfig = get },
-      onChange: () => {},
+    ctx.inject(['settings'], (settingsCtx) => {
+      settingsCtx.settings.installSection(ctx, 'dsh-restart', RestartConfigSchema, DEFAULT_CONFIG, {
+        setSource: (get) => { resolveConfig = get },
+        onChange: () => {},
+      })
     })
     debugLog('apply: settings installed')
   } catch (error) {
-    debugLog('apply: installSettingsSection THREW: ' + String(error))
+    debugLog('apply: settings installSection THREW: ' + String(error))
   }
 
   try {

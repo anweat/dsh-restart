@@ -17,6 +17,18 @@
   - `watchdogCooldownMs` / `watchdogPollMs` — 看门狗冷却与轮询间隔。
 - **「立即重启」按钮**：先读取当前进程身份，安排重启后等待新进程恢复并自动刷新页面。只读 GET 返回 `{ pid, startedAt }`；出于安全考虑，重启 POST 仍仅接受来自环回地址（127.0.0.1 / localhost）的同源请求，经反向代理/远程访问时会被拒绝（403）。
 
+## 兼容与发布通道
+
+| 插件发布通道 | DSH 基线 | 兼容承诺 |
+|---|---|---|
+| npm `latest`（当前正式发布插件） | `dsh-v0.1.1-rc.2` | 已验证维护基线 |
+| npm `next` 候选（`0.1.3-alpha.3`） | `dsh-v0.1.2-alpha.3` | 已通过隔离真实 profile 门禁，仅用于开发预览 |
+| 后续 DSH 正式版 `0.1.2` | 尚未发布 | 发布并完成真实 profile 门禁后再声明兼容 |
+
+开发版不会覆盖 npm `latest`。alpha.3 依赖按精确版本锁定；该版本已移除
+`@deepseek-ai/dsh-client-runtime`，客户端契约分别迁移到 Cordis、
+`dsh-client-store` 与 `dsh-client-ui-settings`，不会混装 rc.2 运行时。
+
 ## 安装
 
 1. 把包加入 profile 依赖并挂进 bundle：

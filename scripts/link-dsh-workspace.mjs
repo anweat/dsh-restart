@@ -15,7 +15,7 @@ const PACKAGE_PATHS = new Map([
   ['@deepseek-ai/dsh-agent', 'packages/core/agent'],
   ['@deepseek-ai/dsh-host-webserver', 'packages/host/webserver'],
   ['@deepseek-ai/dsh-client-locale', 'packages/client/locale'],
-  ['@deepseek-ai/dsh-client-runtime', 'packages/client/runtime'],
+  ['@deepseek-ai/dsh-client-store', 'packages/client/store'],
   ['@deepseek-ai/dsh-client-ui-settings', 'packages/client/ui-settings'],
   ['@deepseek-ai/dsh-client-ui-settings-plugins', 'packages/client/ui-settings-plugins'],
   ['@deepseek-ai/dsh-client-ui-slots', 'packages/client/ui-slots'],

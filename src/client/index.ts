@@ -4,7 +4,8 @@
  * the Host reads them back through installSettingsSection.
  */
 import type { Context } from './context-types.ts'
-import { createSnapshotStore, type SettingsScope, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { SettingsCard } from './SettingsCard.tsx'
 import { en, zh } from './locales.ts'
