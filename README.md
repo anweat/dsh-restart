@@ -22,10 +22,10 @@
 | 插件发布通道 | DSH 基线 | 兼容承诺 |
 |---|---|---|
 | npm `latest`（当前正式发布插件） | `dsh-v0.1.1-rc.2` | 已验证维护基线 |
-| npm `next` 候选（`0.1.3-alpha.3`） | `dsh-v0.1.2-alpha.3` | 已通过隔离真实 profile 门禁，仅用于开发预览 |
+| npm `next` 候选（`0.1.3-alpha.4`） | `dsh-v0.1.2-alpha.4` | 已通过隔离真实 profile 门禁，仅用于开发预览 |
 | 后续 DSH 正式版 `0.1.2` | 尚未发布 | 发布并完成真实 profile 门禁后再声明兼容 |
 
-开发版不会覆盖 npm `latest`。alpha.3 依赖按精确版本锁定；该版本已移除
+开发版不会覆盖 npm `latest`。alpha.4 依赖按精确版本锁定；该版本已移除
 `@deepseek-ai/dsh-client-runtime`，客户端契约分别迁移到 Cordis、
 `dsh-client-store` 与 `dsh-client-ui-settings`，不会混装 rc.2 运行时。
 
