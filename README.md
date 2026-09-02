@@ -29,6 +29,19 @@
 `@deepseek-ai/dsh-client-runtime`，客户端契约分别迁移到 Cordis、
 `dsh-client-store` 与 `dsh-client-ui-settings`，不会混装 rc.2 运行时。
 
+### 源码部署排错
+
+- 本开发分支只对齐官方标签 `dsh-v0.1.2-alpha.4`。源码 checkout 先执行
+  `corepack pnpm install --frozen-lockfile` 和 `corepack pnpm run build`，再把本地插件
+  重新加入隔离 profile；只安装依赖但没有构建 workspace，会表现为缺少
+  `@deepseek-ai/*/lib`，并不是 restart 拉起失败。
+- 如果页面显示 `list slot "settings.plugin.item" requires options.id`，说明 Harness
+  与插件客户端落在不同的开发期 slot 契约。alpha.4 的官方契约是 keyed slot，
+  本插件必须使用 `options.key`；不要直接改成 `id`，应统一 Harness 标签、插件分支
+  和 profile 锁文件后重装。
+- pnpm 首次安装 profile 依赖时可能把原生包写成待决的 `allowBuilds` 项。逐项确认
+  `true` 或 `false` 后重跑 `dsh plugin --profile <name> add ...`，不要用全局放行绕过。
+
 ## 安装
 
 1. 把包加入 profile 依赖并挂进 bundle：
