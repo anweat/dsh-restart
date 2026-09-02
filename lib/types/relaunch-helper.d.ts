@@ -1,5 +1,5 @@
 /**
- * Emit the JS source shared by the detached restart helper and watchdog.
+ * Emit the JS source used by the detached restart helper.
  *
  * On Windows DSH needs a real-but-hidden console so later sandboxed PowerShell
  * children inherit it instead of flashing a new visible console. The launcher

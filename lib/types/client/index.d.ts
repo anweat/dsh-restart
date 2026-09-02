@@ -13,9 +13,6 @@ export interface RestartCardState {
     writable: boolean;
     legacyRestart: boolean;
     continuePrompt: string;
-    watchdogEnabled: boolean;
-    watchdogCooldownMs: number;
-    watchdogPollMs: number;
 }
 export type SettingsCardProps = PropsLocale<typeof NS> & {
     useDshRestart: <R>(selector: (snapshot: RestartCardState) => R) => R;

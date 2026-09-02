@@ -17,7 +17,8 @@ function jsonResponse(value, status = 200) {
 
 test('takes the baseline from GET and ignores an identity-less POST response', async () => {
   let getCount = 0
-  const fetchImpl = async (_input, init = {}) => {
+  const fetchImpl = async (input, init = {}) => {
+    if (input === '/') return new Response('ready')
     if (init.method === 'POST') return jsonResponse({ ok: true, pid: 101, restarting: true }, 202)
     getCount += 1
     return jsonResponse(getCount < 12 ? oldIdentity : newIdentity)
@@ -35,7 +36,8 @@ test('takes the baseline from GET and ignores an identity-less POST response', a
 
 test('does not count failed probes during a long restart outage', async () => {
   let getCount = 0
-  const fetchImpl = async (_input, init = {}) => {
+  const fetchImpl = async (input, init = {}) => {
+    if (input === '/') return new Response('ready')
     if (init.method === 'POST') return jsonResponse({ ok: true }, 202)
     getCount += 1
     if (getCount === 1) return jsonResponse(oldIdentity)
@@ -56,7 +58,8 @@ test('does not count failed probes during a long restart outage', async () => {
 
 test('does not count unchanged identities while the page is hidden', async () => {
   let getCount = 0
-  const fetchImpl = async (_input, init = {}) => {
+  const fetchImpl = async (input, init = {}) => {
+    if (input === '/') return new Response('ready')
     if (init.method === 'POST') return jsonResponse({ ok: true }, 202)
     getCount += 1
     return jsonResponse(getCount < 102 ? oldIdentity : newIdentity)
@@ -121,4 +124,29 @@ test('rejects a malformed successful probe instead of treating it as downtime', 
     /invalid restart identity/,
   )
   assert.equal(getCount, 2)
+})
+
+test('waits for the authenticated frontend before reporting a restarted process', async () => {
+  let identityProbes = 0
+  let frontendProbes = 0
+  const fetchImpl = async (input, init = {}) => {
+    if (input === '/') {
+      frontendProbes += 1
+      return new Response(frontendProbes < 3 ? 'not mounted' : 'ready', {
+        status: frontendProbes < 3 ? 404 : 200,
+      })
+    }
+    if (init.method === 'POST') return jsonResponse({ ok: true }, 202)
+    identityProbes += 1
+    return jsonResponse(identityProbes === 1 ? oldIdentity : newIdentity)
+  }
+
+  const result = await restartAndWait({
+    fetchImpl,
+    sleep: async () => {},
+    isVisible: () => true,
+  })
+
+  assert.equal(result, 'restarted')
+  assert.equal(frontendProbes, 3)
 })

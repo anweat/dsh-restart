@@ -37,6 +37,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { relaunchHelperSource } from './relaunch-helper.js'
+import { RestartCoordinator } from './restart-coordinator.js'
+import { superviseRestartHelper } from './restart-helper-lifecycle.js'
 
 export const name = 'dsh-restart'
 export const inject = ['tools', 'commands', 'agents', 'shell', 'sandboxPolicy']
@@ -45,8 +47,11 @@ export const inject = ['tools', 'commands', 'agents', 'shell', 'sandboxPolicy']
 interface RestartConfig {
   legacyRestart: boolean
   continuePrompt: string
+  /** @deprecated Retained only so existing settings files remain readable. */
   watchdogEnabled: boolean
+  /** @deprecated The embedded watchdog is disabled and this value is ignored. */
   watchdogCooldownMs: number
+  /** @deprecated The embedded watchdog is disabled and this value is ignored. */
   watchdogPollMs: number
 }
 
@@ -72,12 +77,8 @@ const INDEX_FILENAME = 'dsh-process.json'
 /** The "resume marker": the in-progress session to restore after a restart. */
 const RESUME_FILENAME = 'dsh-resume.json'
 
-/** Watchdog artifact filenames (supervisor script + its pid lock). */
-const WATCHDOG_FILENAME = 'dsh-watchdog.cjs'
-const WATCHDOG_PID_FILENAME = 'dsh-watchdog.pid'
-
-/** Restart-in-progress flag: stops the watchdog from racing a deliberate restart. */
-const RESTARTING_FLAG_FILENAME = 'dsh-restarting.flag'
+/** Compatibility stop marker consumed by watchdogs detached by older releases. */
+const LEGACY_WATCHDOG_STOP_FILENAME = 'dsh-stop.flag'
 
 /** Stable identity for this loaded DSH process. */
 const PROCESS_STARTED_AT = new Date(performance.timeOrigin).toISOString()
@@ -94,24 +95,18 @@ function resumeFilePath(): string {
   return path.join(homeDir(), RESUME_FILENAME)
 }
 
-function watchdogFilePath(): string {
-  return path.join(homeDir(), WATCHDOG_FILENAME)
-}
-
-function watchdogPidFilePath(): string {
-  return path.join(homeDir(), WATCHDOG_PID_FILENAME)
-}
-
-function restartingFlagFilePath(): string {
-  return path.join(homeDir(), RESTARTING_FLAG_FILENAME)
-}
-
-function writeRestartingFlag(): void {
-  try { fs.writeFileSync(restartingFlagFilePath(), String(Date.now()), 'utf8') } catch { /* best-effort */ }
-}
-
-function clearRestartingFlag(): void {
-  try { fs.unlinkSync(restartingFlagFilePath()) } catch { /* already gone */ }
+/** Disable any detached watchdog that may have survived an upgrade. */
+function disableLegacyWatchdog(): void {
+  try {
+    fs.mkdirSync(homeDir(), { recursive: true })
+    fs.writeFileSync(
+      path.join(homeDir(), LEGACY_WATCHDOG_STOP_FILENAME),
+      'disabled by dsh-restart: embedded watchdog retired\n',
+      'utf8',
+    )
+  } catch (error) {
+    console.error('[dsh-restart] failed to disable legacy watchdog:', error)
+  }
 }
 
 /** Record the in-progress sessions before restart (for auto-resume after reboot). */
@@ -189,6 +184,7 @@ function tryAutoContinue(ctx: Context, dynamic: () => RestartConfig): void {
       } catch (error) {
         console.error('[dsh-restart] auto-continue failed:', error)
         debugLog(`auto-continue: followup error for ${sessionId}: ${String(error)}`)
+        continue
       }
       pending.delete(sessionId)
     }
@@ -203,119 +199,6 @@ function tryAutoContinue(ctx: Context, dynamic: () => RestartConfig): void {
     }
   }, 500)
   ctx.effect(() => () => clearInterval(interval))
-}
-
-/**
- * The supervisor script (written to $DSH_HOME/dsh-watchdog.cjs and run detached):
- * polls whether the DSH web server answers on its port, and relaunches it when
- * the port goes down. Liveness is PORT-based (not pid-based), so a stale process
- * index can never cause a double spawn. A `dsh-restarting.flag` (written by both
- * the restart tool and the watchdog's own relaunch) suppresses relaunch while a
- * restart is already in flight. A `dsh-stop.flag` file stops the watchdog.
- */
-function watchdogScript(cooldownMs: number, pollMs: number): string {
-  return String.raw`// dsh-watchdog: monitors the DSH web port and relaunches it on death.
-const { spawn, spawnSync } = require('node:child_process')
-const net = require('node:net')
-const fs = require('node:fs')
-const path = require('node:path')
-const os = require('node:os')
-${relaunchHelperSource()}
-const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
-const indexFile = path.join(home, 'dsh-process.json')
-const stopFile = path.join(home, 'dsh-stop.flag')
-const restartFlag = path.join(home, 'dsh-restarting.flag')
-const pidFile = path.join(home, 'dsh-watchdog.pid')
-const logFile = path.join(home, 'dsh-watchdog.log')
-const PORT = (function () {
-  const m = String(process.env.DSH_WEB_URL || '').match(/:(\d+)/)
-  return m ? Number(m[1]) : 3080
-})()
-
-function log(msg) {
-  try { fs.appendFileSync(logFile, new Date().toISOString() + ' ' + msg + '\n', 'utf8') } catch {}
-}
-
-try { fs.writeFileSync(pidFile, String(process.pid), 'utf8') } catch {}
-
-function readIndex() {
-  try { return JSON.parse(fs.readFileSync(indexFile, 'utf8')) } catch { return null }
-}
-
-function portUp(cb) {
-  const s = net.connect({ port: PORT, host: '127.0.0.1', timeout: 400 })
-  s.once('connect', function () { s.destroy(); cb(true) })
-  s.once('timeout', function () { s.destroy(); cb(false) })
-  s.once('error', function () { cb(false) })
-}
-
-function restartInProgress() {
-  try {
-    const t = Number(fs.readFileSync(restartFlag, 'utf8'))
-    return Number.isFinite(t) && (Date.now() - t) < ${cooldownMs}
-  } catch { return false }
-}
-
-function relaunch() {
-  const idx = readIndex()
-  if (!idx || !idx.execPath) { log('relaunch: no usable index'); return }
-  try { fs.writeFileSync(restartFlag, String(Date.now()), 'utf8') } catch {}
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const out = path.join(os.tmpdir(), 'dsh-watchdog-' + stamp + '.out.log')
-  const err = path.join(os.tmpdir(), 'dsh-watchdog-' + stamp + '.err.log')
-  try {
-    const argv = [].concat(idx.execArgv || [], idx.argv || [])
-    const mode = relaunchDsh(idx.execPath, argv, idx.cwd, out, err)
-    log('relaunch: spawned via ' + mode + ' cwd=' + idx.cwd)
-  } catch (er) {
-    log('relaunch failed: ' + String(er))
-  }
-}
-
-let checking = false
-setInterval(function () {
-  if (fs.existsSync(stopFile)) {
-    log('stop flag present, exiting')
-    try { fs.unlinkSync(pidFile) } catch {}
-    process.exit(0)
-  }
-  if (checking) return
-  checking = true
-  portUp(function (up) {
-    if (up) { checking = false; return }
-    if (restartInProgress()) { checking = false; return }
-    log('port ' + PORT + ' down, relaunching')
-    relaunch()
-    checking = false
-  })
-}, ${pollMs})
-
-log('watchdog started, pid ' + process.pid)
-`
-}
-
-/** Spawn the supervisor once (guarded by its pid lock) so DSH comes back on death. */
-function ensureWatchdog(dynamic: () => RestartConfig): void {
-  if (!dynamic().watchdogEnabled) return
-  try {
-    const pid = Number.parseInt(fs.readFileSync(watchdogPidFilePath(), 'utf8'), 10)
-    if (!Number.isNaN(pid) && pid > 0) {
-      try { process.kill(pid, 0); return } catch { /* stale pid file — spawn a fresh one */ }
-    }
-  } catch { /* no pid file yet */ }
-  try {
-    fs.writeFileSync(watchdogFilePath(), watchdogScript(dynamic().watchdogCooldownMs, dynamic().watchdogPollMs), 'utf8')
-    const child = spawn(process.execPath, [watchdogFilePath()], {
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
-    })
-    child.once('error', () => {})
-    child.unref()
-    debugLog('watchdog spawned pid ' + child.pid)
-  } catch (error) {
-    console.error('[dsh-restart] failed to spawn watchdog:', error)
-  }
 }
 
 /** Quote one argv element for a cmd-runnable command line. */
@@ -359,13 +242,14 @@ interface RestartInfo {
   logErr: string
 }
 
+const restartCoordinator = new RestartCoordinator<RestartInfo>()
+
 /**
  * Node-native self-restart. Spawns a detached helper that relaunches DSH after
  * the current process has exited and released its port, then schedules the
  * current process's own exit.
  */
-function restart(delayMs: number): RestartInfo {
-  writeRestartingFlag()
+function launchRestart(delayMs: number): RestartInfo {
   const argv = [...process.execArgv, ...process.argv.slice(1)]
   const cwd = process.cwd()
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
@@ -393,6 +277,7 @@ function restart(delayMs: number): RestartInfo {
     '  try {',
     '    relaunchDsh(process.execPath, argv, cwd, logOut, logErr)',
     '  } catch (e) {',
+    "    try { fs.appendFileSync(logErr, new Date().toISOString() + ' relaunch failed: ' + String(e && e.stack || e) + '\\n', 'utf8') } catch {}",
     '  } finally {',
     '    try { fs.unlinkSync(selfPath) } catch {}',
     '    process.exit(0)',
@@ -407,13 +292,7 @@ function restart(delayMs: number): RestartInfo {
     env: process.env,
     windowsHide: true,
   })
-  helper.once('error', () => {})
-  helper.unref()
-
-  // Exit the old process after the tool/command result has had time to flush.
-  setTimeout(() => process.exit(0), delayMs)
-
-  return {
+  const info: RestartInfo = {
     ok: true,
     pid: process.pid,
     cwd,
@@ -422,6 +301,21 @@ function restart(delayMs: number): RestartInfo {
     logOut,
     logErr,
   }
+  superviseRestartHelper(helper, {
+    delayMs,
+    exit: () => process.exit(0),
+    onError: (error) => {
+      restartCoordinator.release(info)
+      try { fs.unlinkSync(helperPath) } catch { /* helper never owned cleanup */ }
+      console.error('[dsh-restart] failed to spawn restart helper:', error)
+      debugLog(`restart helper spawn failed: ${String(error)}`)
+    },
+  })
+  return info
+}
+
+function restart(delayMs: number): RestartInfo {
+  return restartCoordinator.claim(() => launchRestart(delayMs)).value
 }
 
 interface WebRestartRequest {
@@ -510,7 +404,6 @@ $result | ConvertTo-Json -Compress`
 
 /** Run the legacy PowerShell/WMI restart through the shell service. */
 async function restartLegacy(ctx: Context, delayMs: number, policy: unknown): Promise<unknown> {
-  writeRestartingFlag()
   const request: Record<string, unknown> = {
     command: buildLegacyScript(indexFilePath(), delayMs),
     timeoutMs: 30000,
@@ -538,8 +431,7 @@ export function apply(ctx: Context): void {
   } catch (error) {
     debugLog('apply: writeProcessIndex THREW: ' + String(error))
   }
-  clearRestartingFlag()
-
+  disableLegacyWatchdog()
   let resolveConfig: () => RestartConfig = () => DEFAULT_CONFIG
   const dynamic = (): RestartConfig => resolveConfig()
   try {
@@ -560,19 +452,12 @@ export function apply(ctx: Context): void {
   } catch (error) {
     debugLog('apply: tryAutoContinue THREW: ' + String(error))
   }
-  try {
-    ensureWatchdog(dynamic)
-    debugLog('apply: watchdog ensured')
-  } catch (error) {
-    debugLog('apply: ensureWatchdog THREW: ' + String(error))
-  }
-
   // The restart bundle may mount before the Web host. A one-shot ctx.get()
   // therefore makes the Settings button permanently unavailable on that boot.
   // Inject the optional service so the route follows the Web server lifetime.
   ctx.inject(['webServer'], (webCtx) => {
     const webServer = webCtx.webServer as { register: (route: WebRoute) => () => void }
-    webServer.register({
+    webCtx.effect(() => webServer.register({
       kind: 'exact',
       path: '/plugins/dsh-restart/restart',
       handler: (req, res) => {
@@ -608,7 +493,7 @@ export function apply(ctx: Context): void {
         })
         res.end(JSON.stringify({ ...result, sessionIds }))
       },
-    })
+    }), 'dsh-restart: restart route')
   })
 
   try {

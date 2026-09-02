@@ -40,15 +40,9 @@ export function SettingsCard(props: SettingsCardProps) {
   if (!state.available) return null
   const disabled = !state.writable
 
-  const toggle = (field: string, value: boolean): void => { set(field, value) }
   const text = (field: string, value: string): void => {
     if (value.trim() === '') clear(field)
     else set(field, value.trim())
-  }
-  const number = (field: string, value: string): void => {
-    if (value.trim() === '') { clear(field); return }
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) set(field, parsed)
   }
   const restartNow = async (): Promise<void> => {
     if (restarting) return
@@ -102,7 +96,7 @@ export function SettingsCard(props: SettingsCardProps) {
           {!state.writable ? <p className={css.readOnly} role="status">{t('readOnly')}</p> : null}
 
           <label className={css.toggleField}>
-            <input className={css.checkbox} type="checkbox" checked={state.legacyRestart} disabled={disabled} onChange={event => { toggle('legacyRestart', event.currentTarget.checked) }} />
+            <input className={css.checkbox} type="checkbox" checked={state.legacyRestart} disabled={disabled} onChange={event => { set('legacyRestart', event.currentTarget.checked) }} />
             <span className={css.toggleCopy}>
               <span className={css.label}>{t('legacyRestart')}</span>
               <span className={css.hint}>{t('legacyRestartHint')}</span>
@@ -113,26 +107,6 @@ export function SettingsCard(props: SettingsCardProps) {
             <span className={css.label}>{t('continuePrompt')}</span>
             <input id="dsh-restart-continue-prompt" className={css.input} type="text" value={state.continuePrompt} disabled={disabled} onChange={event => { text('continuePrompt', event.currentTarget.value) }} />
             <span className={css.hint}>{t('continuePromptHint')}</span>
-          </label>
-
-          <label className={css.toggleField}>
-            <input className={css.checkbox} type="checkbox" checked={state.watchdogEnabled} disabled={disabled} onChange={event => { toggle('watchdogEnabled', event.currentTarget.checked) }} />
-            <span className={css.toggleCopy}>
-              <span className={css.label}>{t('watchdogEnabled')}</span>
-              <span className={css.hint}>{t('watchdogEnabledHint')}</span>
-            </span>
-          </label>
-
-          <label className={css.field} htmlFor="dsh-restart-watchdog-cooldown">
-            <span className={css.label}>{t('watchdogCooldownMs')}</span>
-            <input id="dsh-restart-watchdog-cooldown" className={css.input} type="number" inputMode="numeric" value={state.watchdogCooldownMs || ''} disabled={disabled} onChange={event => { number('watchdogCooldownMs', event.currentTarget.value) }} />
-            <span className={css.hint}>{t('watchdogCooldownMsHint')}</span>
-          </label>
-
-          <label className={css.field} htmlFor="dsh-restart-watchdog-poll">
-            <span className={css.label}>{t('watchdogPollMs')}</span>
-            <input id="dsh-restart-watchdog-poll" className={css.input} type="number" inputMode="numeric" value={state.watchdogPollMs || ''} disabled={disabled} onChange={event => { number('watchdogPollMs', event.currentTarget.value) }} />
-            <span className={css.hint}>{t('watchdogPollMsHint')}</span>
           </label>
 
           <div className={css.footer}>

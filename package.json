@@ -1,7 +1,7 @@
 {
   "name": "dsh-restart",
   "version": "0.1.3-alpha.4",
-  "description": "DSH 重启插件：可配置的重启方式（Node 原生 / 旧 PowerShell 适配）、重启后自动继续的提示词、可选看门狗自动拉起。",
+  "description": "DSH 重启插件：可配置的重启方式（Node 原生 / 旧 PowerShell 适配）与重启后自动继续提示。",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -12,7 +12,6 @@
     "deepseek-harness",
     "restart",
     "plugin",
-    "watchdog",
     "client-plugin"
   ],
   "type": "module",
@@ -60,6 +59,7 @@
     "build": "node -e \"fs.rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.json && tsdown",
     "test": "pnpm run build && node --test tests/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify:live": "node scripts/verify-live.mjs",
     "prepare": "pnpm run build",
     "prepack": "pnpm run build",
     "prepublishOnly": "pnpm run build"

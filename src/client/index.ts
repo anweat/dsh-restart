@@ -20,9 +20,6 @@ export interface RestartCardState {
   writable: boolean
   legacyRestart: boolean
   continuePrompt: string
-  watchdogEnabled: boolean
-  watchdogCooldownMs: number
-  watchdogPollMs: number
 }
 
 export type SettingsCardProps = PropsLocale<typeof NS> & {
@@ -45,9 +42,6 @@ export function apply(ctx: Context): void {
       writable: snap.writable,
       legacyRestart: value.legacyRestart === true,
       continuePrompt: typeof value.continuePrompt === 'string' ? value.continuePrompt : '',
-      watchdogEnabled: value.watchdogEnabled === true,
-      watchdogCooldownMs: typeof value.watchdogCooldownMs === 'number' ? value.watchdogCooldownMs : 0,
-      watchdogPollMs: typeof value.watchdogPollMs === 'number' ? value.watchdogPollMs : 0,
     }
   }
 

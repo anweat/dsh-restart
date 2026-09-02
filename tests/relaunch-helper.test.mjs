@@ -14,6 +14,10 @@ function generatedRelaunch() {
   return vm.runInNewContext(`${relaunchHelperSource()}\nrelaunchDsh`, context)
 }
 
+function generatedDirectRelaunch(context) {
+  return vm.runInNewContext(`${relaunchHelperSource()}\nrelaunchDirect`, context)
+}
+
 async function waitForFile(file, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -63,4 +67,29 @@ test('Windows hidden-console relaunch preserves exact argv boundaries', {
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('direct relaunch closes its copies of redirected log descriptors', () => {
+  const closed = []
+  const fakeFs = {
+    openSync(file) { return file === 'stdout.log' ? 31 : 32 },
+    closeSync(fd) { closed.push(fd) },
+  }
+  const child = {
+    pid: 1234,
+    once() { return this },
+    unref() {},
+  }
+  const relaunchDirect = generatedDirectRelaunch({
+    Buffer,
+    fs: fakeFs,
+    os,
+    path,
+    process,
+    spawn() { return child },
+    spawnSync,
+  })
+
+  assert.equal(relaunchDirect('node', ['dsh.js'], '.', 'stdout.log', 'stderr.log'), 1234)
+  assert.deepEqual(closed, [31, 32])
 })
