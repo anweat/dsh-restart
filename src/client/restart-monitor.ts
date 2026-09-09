@@ -6,6 +6,7 @@ export interface RestartIdentity {
 export interface RestartWaitOptions {
   fetchImpl?: typeof fetch
   isVisible?: () => boolean
+  maxRecoveryProbes?: number
   maxVisibleStableProbes?: number
   pollIntervalMs?: number
   signal?: AbortSignal
@@ -73,6 +74,24 @@ async function fetchRestartIdentity(fetchImpl: typeof fetch, signal?: AbortSigna
   return parseRestartIdentity(await response.json())
 }
 
+async function frontendReady(fetchImpl: typeof fetch, signal?: AbortSignal): Promise<boolean> {
+  let response: Response
+  try {
+    response = await fetchImpl('/', {
+      method: 'GET',
+      cache: 'no-store',
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted) throw error
+    throw new RestartProbeUnavailableError('frontend probe unavailable', { cause: error })
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(`restart recovery unauthorized: HTTP ${response.status}`)
+  }
+  return response.ok
+}
+
 function identityChanged(before: RestartIdentity, after: RestartIdentity): boolean {
   return before.pid !== after.pid || before.startedAt !== after.startedAt
 }
@@ -81,6 +100,7 @@ function identityChanged(before: RestartIdentity, after: RestartIdentity): boole
 export async function restartAndWait(options: RestartWaitOptions = {}): Promise<RestartWaitResult> {
   const fetchImpl = options.fetchImpl ?? fetch
   const isVisible = options.isVisible ?? (() => document.visibilityState === 'visible')
+  const maxRecoveryProbes = options.maxRecoveryProbes ?? 120
   const maxVisibleStableProbes = options.maxVisibleStableProbes ?? 90
   const pollIntervalMs = options.pollIntervalMs ?? 1000
   const sleep = options.sleep ?? defaultSleep
@@ -96,6 +116,7 @@ export async function restartAndWait(options: RestartWaitOptions = {}): Promise<
   if (!response.ok) throw new Error(`restart request failed: HTTP ${response.status}`)
 
   let visibleStableProbes = 0
+  let recoveryProbes = 0
   while (visibleStableProbes < maxVisibleStableProbes) {
     await sleep(pollIntervalMs, signal)
     let current: RestartIdentity
@@ -105,7 +126,18 @@ export async function restartAndWait(options: RestartWaitOptions = {}): Promise<
       if (!(error instanceof RestartProbeUnavailableError)) throw error
       continue
     }
-    if (identityChanged(baseline, current)) return 'restarted'
+    if (identityChanged(baseline, current)) {
+      recoveryProbes += 1
+      try {
+        if (await frontendReady(fetchImpl, signal)) return 'restarted'
+      } catch (error) {
+        if (!(error instanceof RestartProbeUnavailableError)) throw error
+      }
+      if (recoveryProbes >= maxRecoveryProbes) {
+        throw new Error('restarted process did not serve the authenticated frontend')
+      }
+      continue
+    }
     if (isVisible()) visibleStableProbes += 1
   }
   return 'stale'

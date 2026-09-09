@@ -1,16 +1,10 @@
 export declare const zh: {
     readonly title: "DSH 重启";
-    readonly description: "重启方式、自动继续提示词与看门狗设置（写入 settings.yaml，host 读取）";
+    readonly description: "重启方式与自动继续提示词（写入 settings.yaml，host 读取）";
     readonly legacyRestart: "旧重启方式";
     readonly legacyRestartHint: "true = 用 PowerShell/WMI/taskkill 旧方式重启（适配）；false = Node 原生重启";
     readonly continuePrompt: "重启后注入的提示词";
     readonly continuePromptHint: "重启后自动继续时注入给 agent 的文本（空则用默认）";
-    readonly watchdogEnabled: "看门狗";
-    readonly watchdogEnabledHint: "true = 崩溃/关闭时自动拉起 DSH（默认关闭，需谨慎）";
-    readonly watchdogCooldownMs: "看门狗冷却（毫秒）";
-    readonly watchdogCooldownMsHint: "两次拉起之间的最小间隔";
-    readonly watchdogPollMs: "看门狗轮询（毫秒）";
-    readonly watchdogPollMsHint: "探测端口存活的间隔";
     readonly expand: "展开";
     readonly collapse: "收起";
     readonly readOnly: "当前配置为只读";
@@ -23,17 +17,11 @@ export declare const zh: {
 };
 export declare const en: {
     readonly title: "DSH Restart";
-    readonly description: "Restart method, auto-continue prompt, and watchdog settings (stored in settings.yaml)";
+    readonly description: "Restart method and auto-continue prompt (stored in settings.yaml)";
     readonly legacyRestart: "Legacy restart";
     readonly legacyRestartHint: "true = old PowerShell/WMI/taskkill restart; false = Node-native restart";
     readonly continuePrompt: "Continue prompt";
     readonly continuePromptHint: "Text injected to the agent after restart (empty = default)";
-    readonly watchdogEnabled: "Watchdog";
-    readonly watchdogEnabledHint: "true = auto-relaunch DSH on crash/close (off by default)";
-    readonly watchdogCooldownMs: "Watchdog cooldown (ms)";
-    readonly watchdogCooldownMsHint: "Minimum interval between relaunches";
-    readonly watchdogPollMs: "Watchdog poll (ms)";
-    readonly watchdogPollMsHint: "Interval for probing port liveness";
     readonly expand: "Expand";
     readonly collapse: "Collapse";
     readonly readOnly: "This configuration is read-only";

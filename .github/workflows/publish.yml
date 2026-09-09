@@ -46,6 +46,8 @@ jobs:
   pack:
     name: Build and pack tarball
     runs-on: ubuntu-24.04
+    outputs:
+      dist_tag: ${{ steps.version.outputs.dist_tag }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -65,6 +67,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify release version
+        id: version
         run: |
           pkg_version=$(node -p "require('./package.json').version")
           echo "package.json version: $pkg_version"
@@ -75,10 +78,17 @@ jobs:
               exit 1
             fi
           fi
+          if [[ "$pkg_version" == *-* ]]; then
+            dist_tag=next
+          else
+            dist_tag=latest
+          fi
+          echo "npm dist-tag: $dist_tag"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
           echo "PKG_VERSION=$pkg_version" >> "$GITHUB_ENV"
 
-      - name: Build
-        run: pnpm build
+      - name: Test
+        run: pnpm test
 
       - name: Pack tarball
         run: pnpm pack --pack-destination dist
@@ -119,7 +129,7 @@ jobs:
       - name: Publish tarball
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish ./dist/*.tgz --provenance --access public
+        run: npm publish ./dist/*.tgz --provenance --access public --tag "${{ needs.pack.outputs.dist_tag }}"
 
   release:
     name: GitHub Release with tarball
@@ -138,3 +148,4 @@ jobs:
         with:
           files: dist/*.tgz
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

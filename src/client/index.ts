@@ -4,7 +4,8 @@
  * the Host reads them back through installSettingsSection.
  */
 import type { Context } from './context-types.ts'
-import { createSnapshotStore, type SettingsScope, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { SettingsCard } from './SettingsCard.tsx'
 import { en, zh } from './locales.ts'
@@ -19,9 +20,6 @@ export interface RestartCardState {
   writable: boolean
   legacyRestart: boolean
   continuePrompt: string
-  watchdogEnabled: boolean
-  watchdogCooldownMs: number
-  watchdogPollMs: number
 }
 
 export type SettingsCardProps = PropsLocale<typeof NS> & {
@@ -44,9 +42,6 @@ export function apply(ctx: Context): void {
       writable: snap.writable,
       legacyRestart: value.legacyRestart === true,
       continuePrompt: typeof value.continuePrompt === 'string' ? value.continuePrompt : '',
-      watchdogEnabled: value.watchdogEnabled === true,
-      watchdogCooldownMs: typeof value.watchdogCooldownMs === 'number' ? value.watchdogCooldownMs : 0,
-      watchdogPollMs: typeof value.watchdogPollMs === 'number' ? value.watchdogPollMs : 0,
     }
   }
 

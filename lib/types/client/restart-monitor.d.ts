@@ -5,6 +5,7 @@ export interface RestartIdentity {
 export interface RestartWaitOptions {
     fetchImpl?: typeof fetch;
     isVisible?: () => boolean;
+    maxRecoveryProbes?: number;
     maxVisibleStableProbes?: number;
     pollIntervalMs?: number;
     signal?: AbortSignal;
