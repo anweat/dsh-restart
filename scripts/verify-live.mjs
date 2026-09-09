@@ -21,7 +21,9 @@ const consoleProblems = []
 const pageErrors = []
 page.on('console', message => {
   if (message.type() === 'error' || message.type() === 'warning') {
-    consoleProblems.push(`${message.type()}: ${message.text()}`)
+    const location = message.location()
+    const suffix = location.url ? ` (${location.url}:${location.lineNumber ?? 0})` : ''
+    consoleProblems.push(`${message.type()}: ${message.text()}${suffix}`)
   }
 })
 page.on('pageerror', error => { pageErrors.push(String(error)) })
@@ -57,12 +59,14 @@ try {
   // Escape only dismisses that transient dialog; it does not alter DSH data.
   await page.keyboard.press('Escape')
   await page.waitForTimeout(250)
-  const configureLater = page.getByRole('button', { name: '稍后配置', exact: true })
-  try {
-    await configureLater.waitFor({ timeout: 5_000 })
-    await configureLater.click()
-  } catch {
-    // Existing verification profiles may have already completed onboarding.
+  for (const label of ['继续', '稍后配置']) {
+    const onboardingAction = page.getByRole('button', { name: label, exact: true })
+    try {
+      await onboardingAction.waitFor({ timeout: 5_000 })
+      await onboardingAction.click()
+    } catch {
+      // Existing profiles may have completed this onboarding step already.
+    }
   }
   if (process.env.DSH_VERIFY_DEBUG_SCREENSHOT) {
     await page.screenshot({ path: process.env.DSH_VERIFY_DEBUG_SCREENSHOT })

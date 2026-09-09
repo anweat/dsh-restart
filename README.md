@@ -25,10 +25,10 @@
 | 插件发布通道 | DSH 基线 | 兼容承诺 |
 |---|---|---|
 | npm `latest`（当前正式发布插件） | `dsh-v0.1.1-rc.2` | 已验证维护基线 |
-| npm `next` 候选（`0.1.3-alpha.4`） | `dsh-v0.1.2-alpha.4` | 已通过隔离真实 profile 门禁，仅用于开发预览 |
-| 后续 DSH 正式版 `0.1.2` | 尚未发布 | 发布并完成真实 profile 门禁后再声明兼容 |
+| npm `next` 候选（`0.1.3-alpha.5`） | `dsh-v0.1.5-alpha.1` | 精确依赖与真实 profile 验收目标 |
+| 后续 DSH 正式版 | 尚未发布 | 发布并完成真实 profile 门禁后再声明兼容 |
 
-开发版不会覆盖 npm `latest`。alpha.4 依赖按精确版本锁定；该版本已移除
+开发版不会覆盖 npm `latest`。`0.1.5-alpha.1` 依赖按精确版本锁定；该版本已移除
 `@deepseek-ai/dsh-client-runtime`，客户端契约分别迁移到 Cordis、
 `dsh-client-store` 与 `dsh-client-ui-settings`，不会混装 rc.2 运行时。
 
@@ -43,12 +43,12 @@
 
 ### 源码部署排错
 
-- 本开发分支只对齐官方标签 `dsh-v0.1.2-alpha.4`。源码 checkout 先执行
+- 本开发分支只对齐官方标签 `dsh-v0.1.5-alpha.1`。源码 checkout 先执行
   `corepack pnpm install --frozen-lockfile` 和 `corepack pnpm run build`，再把本地插件
   重新加入隔离 profile；只安装依赖但没有构建 workspace，会表现为缺少
   `@deepseek-ai/*/lib`，并不是 restart 拉起失败。
 - 如果页面显示 `list slot "settings.plugin.item" requires options.id`，说明 Harness
-  与插件客户端落在不同的开发期 slot 契约。alpha.4 的官方契约是 keyed slot，
+  与插件客户端落在不同的开发期 slot 契约。`0.1.5-alpha.1` 的官方契约是 keyed slot，
   本插件必须使用 `options.key`；不要直接改成 `id`，应统一 Harness 标签、插件分支
   和 profile 锁文件后重装。
 - pnpm 首次安装 profile 依赖时可能把原生包写成待决的 `allowBuilds` 项。逐项确认
