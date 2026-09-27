@@ -1,6 +1,6 @@
 {
   "name": "dsh-restart",
-  "version": "0.1.3-alpha.5",
+  "version": "0.1.3-alpha.6",
   "description": "DSH 重启插件：可配置的重启方式（Node 原生 / 旧 PowerShell 适配）与重启后自动继续提示。",
   "license": "MIT",
   "repository": {
