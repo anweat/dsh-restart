@@ -19,6 +19,30 @@
  * @module dsh-restart
  */
 import type { Context } from '@deepseek-ai/cordis';
+import z from '@deepseek-ai/schemastery';
 export declare const name = "dsh-restart";
 export declare const inject: string[];
-export declare function apply(ctx: Context): void;
+/** Plugin configuration (editable via settings.yaml and, later, the UI card). */
+interface RestartConfig {
+    legacyRestart: boolean;
+    continuePrompt: string;
+    /** @deprecated Retained only so existing settings files remain readable. */
+    watchdogEnabled: boolean;
+    /** @deprecated The embedded watchdog is disabled and this value is ignored. */
+    watchdogCooldownMs: number;
+    /** @deprecated The embedded watchdog is disabled and this value is ignored. */
+    watchdogPollMs: number;
+}
+/**
+ * The plugin configuration schema, exported under the name the Host reads.
+ *
+ * DSH 0.1.7 serves a settings form only for a profile entry whose plugin
+ * module exports `Config`: the settings provider resolves an entry through
+ * `entry.fiber.runtime.Config` (`SettingsForms.schema`). Without this export
+ * the entry has no settings namespace at all — the client configuration form
+ * never reaches `ready`, the page renders its unavailable note, and no
+ * settings.yaml section is offered for this plugin.
+ */
+export declare const Config: z<RestartConfig>;
+export declare function apply(ctx: Context, config?: RestartConfig): void;
+export {};
