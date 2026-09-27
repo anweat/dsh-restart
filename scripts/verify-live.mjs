@@ -11,8 +11,16 @@ const require = createRequire(path.join(harnessRoot, 'apps', 'web', 'package.jso
 const { chromium } = require('playwright')
 
 const screenshotPath = process.env.DSH_VERIFY_SCREENSHOT
+// Chrome is only the transport for this check: DSH_VERIFY_CHROME wins so a host
+// can point at a nightly channel or a container path, and the platform default
+// keeps the script usable on Linux, macOS and Windows alike.
+const DEFAULT_CHROME_PATH = process.platform === 'win32'
+  ? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+  : process.platform === 'darwin'
+    ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    : '/usr/bin/google-chrome'
 const browser = await chromium.launch({
-  executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  executablePath: process.env.DSH_VERIFY_CHROME ?? DEFAULT_CHROME_PATH,
   headless: true,
 })
 const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: 'zh-CN' })
@@ -72,23 +80,29 @@ try {
     await page.screenshot({ path: process.env.DSH_VERIFY_DEBUG_SCREENSHOT })
     console.log(JSON.stringify({ dialogs: await page.locator('[role="dialog"]').allInnerTexts() }))
   }
+  // The sidebar seat lives in the shell, so assert it before the settings dialog
+  // makes the rest of the page inert. It is registered into
+  // `sidebar.footer.action`, which the core sidebar renders directly above its
+  // own Settings row, and it keeps the locale's own label as its accessible name.
+  const sidebarRestart = page.getByRole('button', { name: '重启 DSH', exact: true })
+  await sidebarRestart.waitFor({ timeout: 20_000 })
+  assert.match(String(await sidebarRestart.getAttribute('title')), /重启 DSH/)
   await clickFirst([
     page.getByRole('button', { name: '设置', exact: true }),
     page.getByText('设置', { exact: true }),
   ])
   const settingsDialog = page.getByRole('dialog')
   await settingsDialog.waitFor({ timeout: 20_000 })
+  // DSH 0.1.7 builds settings pages from list slots: this plugin registers
+  // `settings.section`, so it is a row of the settings navigation itself. The
+  // 0.1.5-era 「插件配置」 card list (`settings.plugin.item`) is gone, and this
+  // plugin deliberately does not fall back to the `settings.plugins.tab` tab.
   await clickFirst([
-    settingsDialog.getByRole('button', { name: '插件', exact: true }),
-    settingsDialog.getByText('插件', { exact: true }),
+    settingsDialog.getByRole('button', { name: 'DSH 重启', exact: true }),
+    settingsDialog.getByRole('tab', { name: 'DSH 重启', exact: true }),
+    settingsDialog.getByText('DSH 重启', { exact: true }),
   ])
-  await clickFirst([
-    settingsDialog.getByRole('tab', { name: '插件配置', exact: true }),
-    settingsDialog.getByText('插件配置', { exact: true }),
-  ])
-  const restartCard = settingsDialog.getByRole('button', { name: /DSH 重启/ })
-  await restartCard.waitFor({ timeout: 20_000 })
-  await restartCard.click()
+  await settingsDialog.getByRole('heading', { name: 'DSH 重启', exact: true }).waitFor({ timeout: 20_000 })
 
   const settingsText = await page.locator('body').innerText()
   assert.match(settingsText, /重启后注入的提示词/)
@@ -97,6 +111,13 @@ try {
 
   const before = await restartIdentity()
   await page.getByRole('button', { name: '立即重启', exact: true }).click()
+  // Every Web UI trigger goes through the same secondary confirmation, and the
+  // restart must not be arranged until it is answered.
+  const confirmRestart = page.getByRole('button', { name: '确认重启', exact: true })
+  await confirmRestart.waitFor({ timeout: 10_000 })
+  await page.getByRole('button', { name: '取消', exact: true }).waitFor({ timeout: 5_000 })
+  assert.match(await page.locator('#dsh-restart-confirm-body').innerText(), /正在运行的任务会被中断/)
+  await confirmRestart.click()
   const deadline = Date.now() + 120_000
   let after
   while (Date.now() < deadline) {
@@ -113,7 +134,7 @@ try {
   }
   assert.ok(after, 'DSH process identity did not change within 120 seconds')
   const expectedRestartTransportProblems = consoleProblems.length
-  // The settings card reloads the page itself once it observes the new PID.
+  // The settings page reloads itself once it observes the new PID.
   const recoveryDeadline = Date.now() + 30_000
   let recovered
   while (Date.now() < recoveryDeadline) {

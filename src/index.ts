@@ -43,10 +43,18 @@ import { superviseRestartHelper } from './restart-helper-lifecycle.js'
 export const name = 'dsh-restart'
 export const inject = ['tools', 'commands', 'agents', 'shell', 'sandboxPolicy']
 
-/** Plugin configuration (editable via settings.yaml and, later, the UI card). */
+/** Plugin configuration (editable via settings.yaml and the settings page). */
 interface RestartConfig {
   legacyRestart: boolean
   continuePrompt: string
+  /**
+   * Show the one-click restart entry at the sidebar foot, above Settings.
+   * A Web-UI preference, but it lives in the same settings namespace so the
+   * settings page persists it through settings.yaml like every other field.
+   */
+  quickRestartSidebar: boolean
+  /** Show the one-click restart entry beside the conversation title. */
+  quickRestartHeader: boolean
   /** @deprecated Retained only so existing settings files remain readable. */
   watchdogEnabled: boolean
   /** @deprecated The embedded watchdog is disabled and this value is ignored. */
@@ -58,18 +66,67 @@ interface RestartConfig {
 const RestartConfigSchema: z<RestartConfig> = z.object({
   legacyRestart: z.boolean().default(false),
   continuePrompt: z.string().default('（系统已重启完成）请继续之前未完成的工作。'),
+  quickRestartSidebar: z.boolean().default(true),
+  quickRestartHeader: z.boolean().default(false),
   watchdogEnabled: z.boolean().default(false),
   watchdogCooldownMs: z.number().default(60000),
   watchdogPollMs: z.number().default(1000),
 })
 
+/** The fields the settings page edits; the 0.1.7 form generation serves these. */
+const LIVE_CONFIG_FIELDS: readonly string[] = ['legacyRestart', 'continuePrompt', 'quickRestartSidebar', 'quickRestartHeader']
+
+/**
+ * Mark config fields as live so DSH 0.1.7 serves them on the settings page.
+ *
+ * The 0.1.7 Config-form generation exposes only the fields whose nearest
+ * schema ancestor carries a volatile mark (volatileForm in
+ * @deepseek-ai/dsh-settings), and it drops an entry that marks none from the
+ * settings describe() altogether - no namespace, so the page has nothing
+ * writable and every control renders disabled.
+ *
+ * The mark is the bit .volatile() sets, written into the schema meta directly
+ * so this stays independent of the schemastery typing (the accessor differs
+ * across releases, the meta bit does not).
+ */
+function markVolatile(schema: z<RestartConfig>, fields: readonly string[]): void {
+  const dict = (schema as unknown as {
+    dict?: Record<string, { meta?: Record<string, unknown> } | undefined>
+  }).dict
+  if (dict === undefined) return
+  for (const field of fields) {
+    const node = dict[field]
+    if (node === undefined) continue
+    node.meta = { ...(node.meta ?? {}), volatile: true }
+  }
+}
+
+markVolatile(RestartConfigSchema, LIVE_CONFIG_FIELDS)
+
 const DEFAULT_CONFIG: RestartConfig = {
   legacyRestart: false,
   continuePrompt: '（系统已重启完成）请继续之前未完成的工作。',
+  quickRestartSidebar: true,
+  quickRestartHeader: false,
   watchdogEnabled: false,
   watchdogCooldownMs: 60000,
   watchdogPollMs: 1000,
 }
+
+/**
+ * The plugin configuration schema, exported under the name the Host reads.
+ *
+ * DSH 0.1.7 serves a settings form only for a profile entry whose plugin
+ * module exports `Config`: the settings provider resolves an entry through
+ * `entry.fiber.runtime.Config` (`SettingsForms.schema`). Without this export
+ * the entry has no settings namespace at all — the client configuration form
+ * never reaches `ready`, the page renders its unavailable note, and no
+ * settings.yaml section is offered for this plugin.
+ */
+export const Config: z<RestartConfig> = RestartConfigSchema
+
+/** How long after boot the deferred settings-namespace check runs. */
+const SETTINGS_CHECK_MS = 5000
 
 /** The "process file index": boot facts for external inspection. */
 const INDEX_FILENAME = 'dsh-process.json'
@@ -423,8 +480,13 @@ async function restartLegacy(ctx: Context, delayMs: number, policy: unknown): Pr
   }
 }
 
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config?: RestartConfig): void {
   debugLog(`apply: start pid=${process.pid}`)
+  // Cordis validates the profile entry against `Config` and hands the resolved
+  // configuration to apply; the Host re-applies this plugin when the settings
+  // page writes a field, so this value stays live without the removed 0.1.5
+  // `settings.installSection` wiring.
+  const initialConfig: RestartConfig = { ...DEFAULT_CONFIG, ...(config ?? {}) }
   try {
     writeProcessIndex()
     debugLog('apply: index written')
@@ -432,18 +494,28 @@ export function apply(ctx: Context): void {
     debugLog('apply: writeProcessIndex THREW: ' + String(error))
   }
   disableLegacyWatchdog()
-  let resolveConfig: () => RestartConfig = () => DEFAULT_CONFIG
+  let resolveConfig: () => RestartConfig = () => initialConfig
   const dynamic = (): RestartConfig => resolveConfig()
+  // 0.1.5 hosts exposed `settings.installSection`, which kept a plugin source of
+  // truth for its own config. 0.1.7 removed it in favour of the exported `Config`
+  // below, so the old call now only runs where it still exists.
   try {
     ctx.inject(['settings'], (settingsCtx) => {
-      settingsCtx.settings.installSection(ctx, 'dsh-restart', RestartConfigSchema, DEFAULT_CONFIG, {
-        setSource: (get) => { resolveConfig = get },
+      const settings = (settingsCtx as unknown as {
+        settings?: { installSection?: unknown }
+      }).settings
+      if (settings === undefined || typeof settings.installSection !== 'function') return
+      const install = settings.installSection as unknown as (
+        ctx: unknown, namespace: string, schema: unknown, defaults: unknown, hooks: unknown,
+      ) => unknown
+      install(ctx, 'dsh-restart', RestartConfigSchema, DEFAULT_CONFIG, {
+        setSource: (get: () => RestartConfig) => { resolveConfig = get },
         onChange: () => {},
       })
+      debugLog('apply: legacy settings.installSection attached')
     })
-    debugLog('apply: settings installed')
   } catch (error) {
-    debugLog('apply: settings installSection THREW: ' + String(error))
+    debugLog('apply: settings wiring THREW: ' + String(error))
   }
 
   try {
@@ -570,6 +642,25 @@ export function apply(ctx: Context): void {
   } catch (error) {
     debugLog('apply: commands.register THREW: ' + String(error))
   }
+
+  // The settings page is editable only while the Host serves this entry a
+  // namespace; record the answer so a blank page is diagnosable from this log
+  // alone (volatileForm drops every entry that marks no field live). The check
+  // is deferred because a running apply is still loading its own entry, and
+  // SettingsForms.describe() skips entries whose fiber is not active yet.
+  const namespaceCheck = setTimeout(() => {
+    try {
+      ctx.inject(['settings'], (settingsCtx) => {
+        const settings = (settingsCtx as unknown as { settings?: { describe?: (options?: unknown) => unknown } }).settings
+        if (settings === undefined || typeof settings.describe !== 'function') { debugLog('settings: namespace check unavailable'); return }
+        const rows = settings.describe({ redactSecrets: true }) as Array<{ ns?: unknown }>
+        debugLog('settings: namespace served = ' + (rows.some(row => String(row.ns) === name) ? 'yes' : 'no') + ' (' + rows.length + ' namespaces)')
+      })
+    } catch (error) {
+      debugLog('settings: namespace check THREW: ' + String(error))
+    }
+  }, SETTINGS_CHECK_MS)
+  namespaceCheck.unref?.()
 
   debugLog('apply: complete')
 }
