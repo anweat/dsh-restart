@@ -19,6 +19,24 @@
  * @module dsh-restart
  */
 import type { Context } from '@deepseek-ai/cordis';
+import { type ContextFormed } from '@deepseek-ai/dsh-llm';
 export declare const name = "dsh-restart";
 export declare const inject: string[];
+/**
+ * Producer-owned message source kind for the session-format v4 log.
+ *
+ * Before v4 a plugin-authored message could claim the shared `plugin` kind.
+ * The v4 validator instead resolves `source.kind` against the producer-owned
+ * kinds declared in this merge-extensible map and rejects every other value
+ * with `SessionFormatError: format v4 message requires a producer-owned source
+ * kind`, so — exactly like the harness's own producers — we declare ours here
+ * rather than reusing someone else's identity.
+ */
+declare module '@deepseek-ai/dsh-llm' {
+    interface MessageSourceMap {
+        'dsh-restart': {
+            readonly kind: 'dsh-restart';
+        } & ContextFormed;
+    }
+}
 export declare function apply(ctx: Context): void;

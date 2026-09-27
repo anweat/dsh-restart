@@ -27,7 +27,7 @@ import type {} from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-settings'
 import { spawn } from 'node:child_process'
@@ -42,6 +42,22 @@ import { superviseRestartHelper } from './restart-helper-lifecycle.js'
 
 export const name = 'dsh-restart'
 export const inject = ['tools', 'commands', 'agents', 'shell', 'sandboxPolicy']
+
+/**
+ * Producer-owned message source kind for the session-format v4 log.
+ *
+ * Before v4 a plugin-authored message could claim the shared `plugin` kind.
+ * The v4 validator instead resolves `source.kind` against the producer-owned
+ * kinds declared in this merge-extensible map and rejects every other value
+ * with `SessionFormatError: format v4 message requires a producer-owned source
+ * kind`, so — exactly like the harness's own producers — we declare ours here
+ * rather than reusing someone else's identity.
+ */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dsh-restart': { readonly kind: 'dsh-restart' } & ContextFormed
+  }
+}
 
 /** Plugin configuration (editable via settings.yaml and, later, the UI card). */
 interface RestartConfig {
@@ -159,34 +175,75 @@ function clearResumeMarker(): void {
 }
 
 /**
- * After a restart, wait for the recorded session to be resumed (the client
- * re-opens it) and then inject one "continue" follow-up so the agent picks up
- * the interrupted work without a manual prompt. Polls the live agent registry;
- * gives up after ~60s and clears the marker.
+ * Minimal structural view of the Host Session API that can resume a Session
+ * without a GUI attached.
+ *
+ * Declared locally instead of imported from @deepseek-ai/dsh-api-session-controller
+ * so the plugin still loads — and still waits for the client, exactly as it did
+ * before — on hosts and DSH versions that ship no Session controller.
  */
-function tryAutoContinue(ctx: Context, dynamic: () => RestartConfig): void {
+interface HostSessionResume {
+  /**
+   * Resolve or resume one ordinary Session through the composition the Web
+   * client itself uses when a conversation is opened. Returns the live Agent,
+   * or a Session-domain failure this plugin only logs.
+   */
+  resolveAgent(sessionId: string): Promise<{ readonly agent?: HostResumableAgent } | { readonly error?: unknown }>
+}
+
+/** The one Agent capability auto-continue needs. */
+interface HostResumableAgent {
+  followup(message: ReturnType<typeof createUserMessage>): void
+}
+
+/**
+ * Continue every session that was mid-turn when the process restarted.
+ *
+ * A live agent is preferred. When none is registered yet, the Host Session API
+ * is asked to resume the id, which is the same server-side path the Web client
+ * takes when a conversation is opened — so interrupted work continues even when
+ * nobody clicks back into that session. The poll stays as the fallback for hosts
+ * whose Session API never becomes available; the marker is then kept ~60s.
+ */
+function tryAutoContinue(ctx: Context, dynamic: () => RestartConfig, sessionResume: () => HostSessionResume | undefined): void {
   const sessionIds = readResumeMarker()
   debugLog(`auto-continue: marker has ${sessionIds.length} session(s) ${JSON.stringify(sessionIds)}`)
   if (sessionIds.length === 0) return
   const pending = new Set(sessionIds)
+  const recovering = new Set<string>()
   let attempts = 0
+  const deliver = (agent: HostResumableAgent, sessionId: string): void => {
+    debugLog(`auto-continue: agent for ${sessionId} is live, following up`)
+    try {
+      agent.followup(createUserMessage({
+        content: [{ type: 'text', text: dynamic().continuePrompt }],
+        source: { kind: name, form: 'instructions' },
+      }))
+    } catch (error) {
+      console.error('[dsh-restart] auto-continue failed:', error)
+      debugLog(`auto-continue: followup error for ${sessionId}: ${String(error)}`)
+      return
+    }
+    pending.delete(sessionId)
+  }
   const interval = setInterval(() => {
     attempts += 1
     for (const sessionId of [...pending]) {
-      const agent = ctx.agents.get(sessionId as never)
-      if (agent === undefined) continue
-      debugLog(`auto-continue: agent for ${sessionId} is live, following up`)
-      try {
-        agent.followup(createUserMessage({
-          content: [{ type: 'text', text: dynamic().continuePrompt }],
-          source: { kind: 'plugin', plugin: name, form: 'instructions' },
-        }))
-      } catch (error) {
-        console.error('[dsh-restart] auto-continue failed:', error)
-        debugLog(`auto-continue: followup error for ${sessionId}: ${String(error)}`)
+      const live = ctx.agents.get(sessionId as never)
+      if (live !== undefined) {
+        deliver(live, sessionId)
         continue
       }
-      pending.delete(sessionId)
+      const resume = sessionResume()
+      if (resume === undefined || recovering.has(sessionId)) continue
+      recovering.add(sessionId)
+      void resume.resolveAgent(sessionId).then((result) => {
+        const agent = 'agent' in result ? result.agent : undefined
+        if (agent === undefined) return
+        deliver(agent, sessionId)
+      }).catch((error: unknown) => {
+        debugLog(`auto-continue: resume error for ${sessionId}: ${String(error)}`)
+      }).finally(() => { recovering.delete(sessionId) })
     }
     if (pending.size === 0) {
       debugLog('auto-continue: all sessions continued')
@@ -446,8 +503,27 @@ export function apply(ctx: Context): void {
     debugLog('apply: settings installSection THREW: ' + String(error))
   }
 
+  // The Session API can resume a Session without a GUI, which is what lets an
+  // interrupted task continue after a restart even when the browser never
+  // re-opens that conversation. Injected rather than demanded: a non-Web host
+  // (or an older DSH) has none, and the marker then waits for the client.
+  let sessionResume: HostSessionResume | undefined
   try {
-    tryAutoContinue(ctx, dynamic)
+    ctx.inject(['sessionController'], (sessionCtx) => {
+      const controller = (sessionCtx as unknown as { sessionController?: HostSessionResume }).sessionController
+      if (!controller || typeof controller.resolveAgent !== 'function') return
+      sessionResume = controller
+      sessionCtx.effect(() => () => {
+        if (sessionResume === controller) sessionResume = undefined
+      }, 'dsh-restart: session resume')
+    })
+    debugLog('apply: session resume injected')
+  } catch (error) {
+    debugLog('apply: session resume inject THREW: ' + String(error))
+  }
+
+  try {
+    tryAutoContinue(ctx, dynamic, () => sessionResume)
     debugLog('apply: auto-continue scheduled')
   } catch (error) {
     debugLog('apply: tryAutoContinue THREW: ' + String(error))
