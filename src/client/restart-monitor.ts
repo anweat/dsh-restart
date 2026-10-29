@@ -6,6 +6,8 @@ export interface RestartIdentity {
 export interface RestartWaitOptions {
   fetchImpl?: typeof fetch
   isVisible?: () => boolean
+  /** The UI's active locale, reported so the host can word the continue prompt. */
+  locale?: () => string | undefined
   maxRecoveryProbes?: number
   maxVisibleStableProbes?: number
   pollIntervalMs?: number
@@ -16,6 +18,32 @@ export interface RestartWaitOptions {
 export type RestartWaitResult = 'restarted' | 'stale'
 
 const RESTART_URL = '/plugins/dsh-restart/restart'
+
+/** Header carrying the browser UI's active locale to the host. */
+export const LOCALE_HEADER = 'x-dsh-locale'
+
+function localeHeaders(locale?: () => string | undefined): Record<string, string> {
+  try {
+    const active = locale?.()
+    return typeof active === 'string' && active !== '' ? { [LOCALE_HEADER]: active } : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Tell the host which locale this UI shows. Fire-and-forget: the host keeps
+ * the last one it heard and records it with a restart's resume marker.
+ */
+export function reportUiLocale(locale: string, fetchImpl: typeof fetch = fetch): void {
+  try {
+    void fetchImpl(RESTART_URL, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { [LOCALE_HEADER]: locale },
+    }).catch(() => {})
+  } catch { /* no transport: the host falls back to English */ }
+}
 
 class RestartProbeUnavailableError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -58,12 +86,17 @@ function parseRestartIdentity(value: unknown): RestartIdentity {
   return { pid: Number(candidate.pid), startedAt: candidate.startedAt }
 }
 
-async function fetchRestartIdentity(fetchImpl: typeof fetch, signal?: AbortSignal): Promise<RestartIdentity> {
+async function fetchRestartIdentity(
+  fetchImpl: typeof fetch,
+  signal?: AbortSignal,
+  headers: Record<string, string> = {},
+): Promise<RestartIdentity> {
   let response: Response
   try {
     response = await fetchImpl(RESTART_URL, {
       method: 'GET',
       cache: 'no-store',
+      headers,
       signal,
     })
   } catch (error) {
@@ -106,10 +139,10 @@ export async function restartAndWait(options: RestartWaitOptions = {}): Promise<
   const sleep = options.sleep ?? defaultSleep
   const { signal } = options
 
-  const baseline = await fetchRestartIdentity(fetchImpl, signal)
+  const baseline = await fetchRestartIdentity(fetchImpl, signal, localeHeaders(options.locale))
   const response = await fetchImpl(RESTART_URL, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...localeHeaders(options.locale) },
     body: '{}',
     signal,
   })

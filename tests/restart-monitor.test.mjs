@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  reportUiLocale,
   restartAndWait,
 } from '../lib/client/restart-monitor.js'
 
@@ -149,4 +150,34 @@ test('waits for the authenticated frontend before reporting a restarted process'
 
   assert.equal(result, 'restarted')
   assert.equal(frontendProbes, 3)
+})
+
+test('the restart request carries the UI locale for the continue prompt', async () => {
+  const seen = []
+  let getCount = 0
+  const fetchImpl = async (input, init = {}) => {
+    if (input === '/') return new Response('ready')
+    seen.push({ method: init.method, locale: init.headers?.['x-dsh-locale'] })
+    if (init.method === 'POST') return jsonResponse({ ok: true }, 202)
+    getCount += 1
+    return jsonResponse(getCount < 2 ? oldIdentity : newIdentity)
+  }
+
+  const result = await restartAndWait({
+    fetchImpl,
+    sleep: async () => {},
+    isVisible: () => true,
+    locale: () => 'zh',
+  })
+
+  assert.equal(result, 'restarted')
+  assert.deepEqual(seen.slice(0, 2), [{ method: 'GET', locale: 'zh' }, { method: 'POST', locale: 'zh' }])
+})
+
+test('reporting the UI locale is fire-and-forget', async () => {
+  const calls = []
+  reportUiLocale('en', async (input, init) => { calls.push([input, init.method, init.headers['x-dsh-locale']]); throw new Error('offline') })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.deepEqual(calls, [['/plugins/dsh-restart/restart', 'GET', 'en']])
+  assert.doesNotThrow(() => reportUiLocale('en', () => { throw new Error('no fetch') }))
 })

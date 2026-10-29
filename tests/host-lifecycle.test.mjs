@@ -15,8 +15,8 @@ test('restart route is disposed with the injected Web server lifetime', () => {
 
   process.env.DSH_HOME = root
   const config = {
-    legacyRestart: false,
-    continuePrompt: 'continue',
+    legacyRestart: { get: () => false },
+    continuePrompt: { get: () => 'continue' },
     watchdogEnabled: false,
     watchdogCooldownMs: 60_000,
     watchdogPollMs: 1_000,
@@ -31,13 +31,7 @@ test('restart route is disposed with the injected Web server lifetime', () => {
     effect,
     inject(dependencies, callback) {
       if (dependencies.includes('settings')) {
-        callback({
-          settings: {
-            installSection(_ctx, _name, _schema, _defaults, options) {
-              options.setSource(() => config)
-            },
-          },
-        })
+        callback({ settings: { describe() { return [] } } })
       }
       if (dependencies.includes('webServer')) {
         callback({
@@ -57,7 +51,7 @@ test('restart route is disposed with the injected Web server lifetime', () => {
   }
 
   try {
-    apply(ctx)
+    apply(ctx, config)
     assert.equal(route?.path, '/plugins/dsh-restart/restart')
     for (const cleanup of cleanups) cleanup()
     assert.equal(disposed, true)

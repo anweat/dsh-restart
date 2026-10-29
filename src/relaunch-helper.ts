@@ -6,6 +6,10 @@
  * therefore goes through Start-Process, with a Win32-quoted argument line kept
  * inside a base64 JSON payload so spaces, quotes, empty arguments, and Unicode
  * survive the JavaScript -> PowerShell boundary unchanged.
+ *
+ * The relaunch is gated on the old DSH process actually having exited
+ * (`whenProcessExits`): a fixed sleep raced a slow graceful shutdown and could
+ * start a second DSH while the first still held the listen port.
  */
 export function relaunchHelperSource(): string {
   return String.raw`
@@ -86,6 +90,25 @@ function relaunchHiddenConsole(execPath, argv, cwd, logOut, logErr) {
   }
 }
 
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return !!(e && e.code === 'EPERM')
+  }
+}
+
+function whenProcessExits(pid, timeoutMs, pollMs, callback) {
+  const deadline = Date.now() + timeoutMs
+  const poll = function () {
+    if (!processAlive(pid)) return callback(true)
+    if (Date.now() >= deadline) return callback(false)
+    setTimeout(poll, pollMs)
+  }
+  poll()
+}
+
 function relaunchDsh(execPath, argv, cwd, logOut, logErr) {
   if (process.platform === 'win32') {
     let ok = false
@@ -98,4 +121,60 @@ function relaunchDsh(execPath, argv, cwd, logOut, logErr) {
   return 'direct'
 }
 `
+}
+
+export interface RestartHelperScriptOptions {
+  /** Node argv of the DSH process to relaunch (execArgv + script + args). */
+  argv: readonly string[]
+  cwd: string
+  logOut: string
+  logErr: string
+  /** Where the script itself is written; it deletes this file once loaded. */
+  selfPath: string
+  /** The DSH process that must be gone before the relaunch. */
+  oldPid: number
+  /** When the old process is scheduled to leave. */
+  delayMs: number
+  /** How long past `delayMs` to wait for it before giving up without a relaunch. */
+  exitTimeoutMs: number
+}
+
+/**
+ * The complete detached helper script (CommonJS). It deletes its own file as
+ * soon as it is loaded: a supervisor that kills the helper together with the
+ * old process (systemd KillMode=control-group) would otherwise leave one stale
+ * file per restart. It then waits for the old process to exit, and relaunches
+ * DSH with the same argv + cwd, output appended to the log files. If the old
+ * process outlives the timeout no second DSH is started.
+ */
+export function restartHelperScript(options: RestartHelperScriptOptions): string {
+  return [
+    "const { spawn, spawnSync } = require('node:child_process')",
+    "const fs = require('node:fs')",
+    "const os = require('node:os')",
+    "const path = require('node:path')",
+    relaunchHelperSource(),
+    `const argv = ${JSON.stringify(options.argv)}`,
+    `const cwd = ${JSON.stringify(options.cwd)}`,
+    `const logOut = ${JSON.stringify(options.logOut)}`,
+    `const logErr = ${JSON.stringify(options.logErr)}`,
+    `const selfPath = ${JSON.stringify(options.selfPath)}`,
+    `const oldPid = ${JSON.stringify(options.oldPid)}`,
+    `const delay = ${JSON.stringify(options.delayMs)}`,
+    `const exitTimeout = ${JSON.stringify(options.exitTimeoutMs)}`,
+    'try { fs.unlinkSync(selfPath) } catch {}',
+    "const logFailure = (message) => { try { fs.appendFileSync(logErr, new Date().toISOString() + ' ' + message + '\\n', 'utf8') } catch {} }",
+    'setTimeout(() => {',
+    '  whenProcessExits(oldPid, exitTimeout, 100, (exited) => {',
+    '    try {',
+    '      if (exited) relaunchDsh(process.execPath, argv, cwd, logOut, logErr)',
+    "      else logFailure('relaunch skipped: old DSH pid ' + oldPid + ' still alive ' + exitTimeout + 'ms after its scheduled exit')",
+    '    } catch (e) {',
+    "      logFailure('relaunch failed: ' + String(e && e.stack || e))",
+    '    } finally {',
+    '      process.exit(0)',
+    '    }',
+    '  })',
+    '}, delay)',
+  ].join('\n')
 }

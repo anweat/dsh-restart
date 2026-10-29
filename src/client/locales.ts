@@ -1,12 +1,9 @@
 export const zh = {
-  title: 'DSH 重启',
-  description: '重启方式与自动继续提示词（写入 settings.yaml，host 读取）',
+  description: '重启方式与自动继续提示词（跟随“语言”设置）',
   legacyRestart: '旧重启方式',
   legacyRestartHint: 'true = 用 PowerShell/WMI/taskkill 旧方式重启（适配）；false = Node 原生重启',
   continuePrompt: '重启后注入的提示词',
-  continuePromptHint: '重启后自动继续时注入给 agent 的文本（空则用默认）',
-  expand: '展开',
-  collapse: '收起',
+  continuePromptHint: '重启后自动继续时注入给 agent 的文本；留空则按 DSH「语言」设置选择默认文案',
   readOnly: '当前配置为只读',
   restartNow: '立即重启',
   restarting: '正在重启…',
@@ -17,14 +14,11 @@ export const zh = {
 } as const
 
 export const en = {
-  title: 'DSH Restart',
-  description: 'Restart method and auto-continue prompt (stored in settings.yaml)',
+  description: 'Restart method and auto-continue prompt (empty prompt follows the Language setting)',
   legacyRestart: 'Legacy restart',
   legacyRestartHint: 'true = old PowerShell/WMI/taskkill restart; false = Node-native restart',
   continuePrompt: 'Continue prompt',
-  continuePromptHint: 'Text injected to the agent after restart (empty = default)',
-  expand: 'Expand',
-  collapse: 'Collapse',
+  continuePromptHint: 'Text injected to the agent after restart; empty = default text in the DSH Language setting',
   readOnly: 'This configuration is read-only',
   restartNow: 'Restart now',
   restarting: 'Restarting…',
